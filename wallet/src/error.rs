@@ -122,11 +122,13 @@ impl From<&'static str> for WalletErr {
 impl From<ErrorKind> for WalletErr {
     fn from(e: ErrorKind) -> WalletErr {
         match e {
-            ErrorKind::InvalidChecksum => WalletErr::from("InvalidChecksum"),
-            ErrorKind::InvalidWord(_) => WalletErr::from("InvalidWord"),
-            ErrorKind::InvalidKeysize(_) => WalletErr::from("InvalidKeysize"),
-            ErrorKind::InvalidWordLength(_) => WalletErr::from("InvalidWordLength"),
-            ErrorKind::InvalidEntropyLength(_, _) => WalletErr::from("InvalidEntropyLength"),
+            ErrorKind::InvalidChecksum => WalletErr::from("BIP39: invalid_checksum"),
+            ErrorKind::InvalidWord(_) => WalletErr::from("BIP39: invalid_word"),
+            ErrorKind::InvalidKeysize(_) => WalletErr::from("BIP39: invalid_keysize"),
+            ErrorKind::InvalidWordLength(_) => WalletErr::from("BIP39: invalid_word_length"),
+            ErrorKind::InvalidEntropyLength(_, _) => {
+                WalletErr::from("BIP39: invalid_entropy_length")
+            }
         }
     }
 }
