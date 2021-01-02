@@ -71,6 +71,9 @@ fn main() {
                         // assert_eq!(*ver, protocol::version());
                         if let Ok(response) = from_bytes::<Response>(&serial_buf[..t - 1]) {
                             println!("Rcvd({}): {}", t, response);
+                            if let Response::Err(_) = response {
+                                std::thread::sleep(Duration::from_secs(1))
+                            }
                             i += 1;
                         } else {
                             println!("Failed to parse ({}): {}", t, hex::encode(&serial_buf[..]));

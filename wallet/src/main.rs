@@ -1,6 +1,10 @@
 #![no_main]
 #![no_std]
 
+use hal::flash::FlashExt;
+use panic_halt as _; // panic handler
+use stm32f4xx_hal as hal;
+
 pub mod error;
 mod safemem;
 
@@ -9,11 +13,6 @@ use error::{ErrStringType, WalletErr};
 
 use bip39::{Language, Mnemonic, Seed};
 use numtoa::NumToA;
-
-use panic_halt as _; // panic handler
-use stm32f4xx_hal as hal;
-
-use hal::flash::FlashExt;
 
 use k256::{
     ecdsa::{
@@ -45,7 +44,7 @@ use tiny_keccak::{Hasher, Keccak};
 
 use aes_ccm::{
     aead::{consts::U8, AeadInPlace, NewAead},
-    Aes256Ccm,
+    Aes128Ccm,
 };
 
 const FLASH_START: u32 = 0x0800_0000;
@@ -226,7 +225,6 @@ fn sign_msg(ctx: &Context, msg: &[u8]) -> Result<recoverable::Signature> {
 
 const AES_KEY: &[u8] = &[
     0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
-    0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
 ];
 
 const NONCE: &[u8] = &[
@@ -241,7 +239,7 @@ fn save_seed_phrase(s: &str) -> Result<()> {
 
     let associated_data = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
     // `U8` represents the tag size as a `typenum` unsigned (8-bytes here)
-    let ccm = Aes256Ccm::<U8>::new(AES_KEY.into());
+    let ccm = Aes128Ccm::<U8>::new(AES_KEY.into());
 
     // Encrypt `buffer` in-place, replacing the plaintext contents with ciphertext
     ccm.encrypt_in_place(NONCE.into(), &associated_data, &mut buffer)?;
@@ -264,10 +262,11 @@ fn load_seed_plaintext_size() -> Result<Option<usize>> {
     let sz_bytes = unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR) as *const _, 4) };
 
     // If the size is zero or 0xFFFFFFFF, it's not been set. Therefore we have no saved seed
-    if sz_bytes == [0xFF, 0xFF, 0xFF, 0xFF] || sz_bytes == [0x00, 0x00, 0x00, 0x00] {
+    let sz = usize::from_le_bytes(sz_bytes.try_into()?);
+    if sz == 0 || !sz == 0 {
         Ok(None)
     } else {
-        Ok(Some(usize::from_le_bytes(sz_bytes.try_into()?)))
+        Ok(Some(sz))
     }
 }
 
@@ -288,7 +287,7 @@ where
     let associated_data = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
 
     // `U8` represents the tag size as a `typenum` unsigned (8-bytes here)
-    let ccm = Aes256Ccm::<U8>::new(AES_KEY.into());
+    let ccm = Aes128Ccm::<U8>::new(AES_KEY.into());
     if plaintext.len() != buffer.len() {
         let mut buf = [0u8; 10];
         let mut err_str = ErrStringType::from("plaintext.len() != buff.len(): ");
@@ -298,10 +297,20 @@ where
         return Err(WalletErr::StringErr(err_str));
     }
     // Decrypt `buffer` in-place, replacing its ciphertext contents with the original plaintext
-    ccm.decrypt_in_place(NONCE.into(), &associated_data, buffer)
-        .map_err(|_| WalletErr::from("failed to decrypt"))?;
+    match ccm.decrypt_in_place(NONCE.into(), &associated_data, buffer) {
+        Ok(_) => Ok(unsafe { core::str::from_utf8_unchecked(buffer) }),
+        Err(_) => {
+            //Failed to decrypt.... we should remove the corrupt data
+            // Save to flash
+            let dp = unsafe { stm32::Peripherals::steal() };
+            let mut flash = dp.FLASH;
+            let mut unlocked = flash.unlocked();
 
-    Ok(unsafe { core::str::from_utf8_unchecked(buffer) })
+            // Clear out 200 bytes of ciphertext
+            unlocked.program(SEED_ADDR as usize, &[0u8; 200])?;
+            Err(WalletErr::from("failed to decrypt"))
+        }
+    }
 }
 
 fn load_seed() -> Result<Seed> {

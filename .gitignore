@@ -14,3 +14,7 @@ wallet/target/
 protocol/target/
 
 desktop/target/
+
+bootloader/target/
+
+*.bin
