@@ -15,6 +15,8 @@ use stm32f4xx_hal as hal;
 
 use hal::flash::FlashExt;
 
+use hal::spi::Spi;
+
 use k256::{
     ecdsa::{
         recoverable,
@@ -47,6 +49,10 @@ use aes_ccm::{
     aead::{consts::U8, AeadInPlace, NewAead},
     Aes256Ccm,
 };
+
+use smart_leds::{SmartLedsWrite, White, RGB8, RGBW};
+use ws2812::{devices, Ws2812};
+use ws2812_spi as ws2812;
 
 const FLASH_START: u32 = 0x0800_0000;
 const FLASH_SIZE: u32 = 256 * 1024;
@@ -84,34 +90,33 @@ fn main() -> ! {
         .require_pll48clk()
         .freeze();
 
-    // On the current dev board, driving the LED corrupts the SWD
-    // interface for some reason...so diabling
-    // let gpioc = dp.GPIOC.split();
-    // let mut led = gpioc.pc13.into_push_pull_output();
-
-    // let _ = led.set_low();
-    // let _ = led.set_high();
-
-    // Do I2C related things
-    // For I2C1, SCL=PB6, SDA=PB7, AF04
-    // let gpiob = dp.GPIOB.split();
-    // let scl = gpiob.pb6.into_alternate_af4_open_drain();
-    // let sda = gpiob.pb7.into_alternate_af4_open_drain();
-    // let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
-
-    // let i2c_interface = I2CDIBuilder::new().init(i2c);
-    // let mut disp: GraphicsMode<_, _> = Builder::new().connect(i2c_interface).into();
-    // disp.init().unwrap();
-    // disp.flush().unwrap();
-
-    // // Display the rustacean
-    // let raw_image: ImageRaw<BinaryColor> =
-    //     ImageRaw::new(include_bytes!("../ssd1306-image.data"), 128, 64);
-    // let image: Image<_, BinaryColor> = Image::new(&raw_image, Point::zero());
-    // image.draw(&mut disp).unwrap();
-    // disp.flush().unwrap();
-
     let gpioa = dp.GPIOA.split();
+    // Initizlize SPI1 for ws2812
+    // (SCK, MISO, MOSI)
+    let (sck, miso, mosi) = {
+        (
+            gpioa.pa5.into_alternate_af5(),
+            gpioa.pa6.into_alternate_af5(),
+            gpioa.pa7.into_alternate_af5(),
+        )
+    };
+
+    let spi = Spi::spi1(
+        dp.SPI1,
+        (sck, miso, mosi),
+        ws2812::MODE,
+        3000.khz().into(),
+        clocks,
+    );
+    let mut ws = Ws2812::<_, devices::Sk6812w>::new_sk6812w(spi);
+    let data = &[RGBW {
+        r: 0xFF,
+        g: 0x0,
+        b: 0xFF,
+        a: White(0xFF),
+    }];
+    let _ = ws.write(data.iter().cloned());
+
     let usb = USB {
         usb_global: dp.OTG_FS_GLOBAL,
         usb_device: dp.OTG_FS_DEVICE,
