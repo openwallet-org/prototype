@@ -71,6 +71,8 @@ impl Context {
 // A specifically sized buffer for the USB driver
 static mut EP_MEMORY: [u32; 1024] = [0; 1024];
 
+const MNEMONIC: &'static str = "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside";
+
 #[entry]
 fn main() -> ! {
     // This unwrap is safe because we're the first/only to take() it
@@ -165,7 +167,6 @@ fn main() -> ! {
 
 fn initialize() -> Result<Context> {
     if load_seed_plaintext_size()?.is_none() {
-        const MNEMONIC: &'static str = "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside";
         save_seed_phrase(MNEMONIC)?;
     }
     let seed = load_seed()?;
@@ -210,13 +211,30 @@ where
             };
             transmit_response(Response::Serial(serial), s)
         }
-        Request::Info => transmit_response(
-            Response::Info((
-                load_seed_plaintext_size()?.is_some(),
-                FLASH_START + STORAGE_START,
-            )),
-            s,
-        ),
+        Request::Info => {
+            let addr = MNEMONIC.as_ptr() as usize - FLASH_START as usize;
+            // If our mnemonic hasn't been erased yet, and we have it saved
+            // to disk, overwite it with 0's now
+            if !MNEMONIC.is_empty() && load_seed_plaintext_size()?.is_some() {
+                // If the seed has been saved to disk encrypted,
+                let dp = unsafe { stm32::Peripherals::steal() };
+                let mut flash = dp.FLASH;
+                let mut unlocked = flash.unlocked();
+
+                // Erase the seed from flash
+                for a in addr..addr + MNEMONIC.len() {
+                    unlocked.program(a, &[0; 1])?;
+                }
+            }
+            transmit_response(
+                Response::Info((
+                    load_seed_plaintext_size()?.is_some(),
+                    // FLASH_START + STORAGE_START,
+                    addr as u32,
+                )),
+                s,
+            )
+        }
     }
 }
 
