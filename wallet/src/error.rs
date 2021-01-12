@@ -1,4 +1,4 @@
-use core::array::TryFromSliceError;
+use core::{array::TryFromSliceError, str::Utf8Error};
 
 use bip39::ErrorKind;
 use heapless::{consts::*, String};
@@ -36,6 +36,12 @@ pub enum WalletErr {
 //         }
 //     }
 // }
+
+impl From<Utf8Error> for WalletErr {
+    fn from(_: Utf8Error) -> WalletErr {
+        WalletErr::from("failed to decode as ut8")
+    }
+}
 
 impl From<TryFromSliceError> for WalletErr {
     fn from(_: TryFromSliceError) -> WalletErr {

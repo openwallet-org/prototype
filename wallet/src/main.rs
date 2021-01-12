@@ -72,7 +72,7 @@ impl Context {
 // A specifically sized buffer for the USB driver
 static mut EP_MEMORY: [u32; 1024] = [0; 1024];
 
-const MNEMONIC: &'static str = "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside";
+const MNEMONIC: &str = "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside";
 const AES_KEY: &[u8] = &hex!("C0 C1 C2 C3 C4 C5 C6 C7 C8 C9 CA CB CC CD CE CF");
 const NONCE: &[u8] = &hex!("00 00 00 03 02 01 00 A0 A1 A2 A3 A4 A5");
 const ASSOCIATED_DATA: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
@@ -186,8 +186,8 @@ where
     match r {
         Request::Ping => transmit_response(Response::Pong, s),
         Request::Sig(msg) => {
-            let mut ctx = initialize()?;
-            let sig = sign_msg(&mut ctx, &msg)?;
+            let ctx = initialize()?;
+            let sig = sign_msg(&ctx, &msg)?;
             let sig_bytes = sig.as_bytes();
             transmit_response(Response::Sig(&sig_bytes), s)
         }
@@ -207,14 +207,10 @@ where
             transmit_response(Response::AddressList(&addresses), s)
         }
         Request::Serial => {
-            let serial = read_serial();
-            let serial = if serial[0] == 0xFF {
+            if !is_serial_set() {
                 write_serial()?;
-                read_serial()
-            } else {
-                serial
             };
-            transmit_response(Response::Serial(serial), s)
+            transmit_response(Response::Serial(read_serial()), s)
         }
         Request::Info => transmit_response(
             Response::Info((
@@ -230,6 +226,10 @@ fn sign_msg(ctx: &Context, msg: &[u8]) -> Result<recoverable::Signature> {
     Ok(secret_key(ctx)?.try_sign(&msg)?)
 }
 
+// This is the kind of thing we would do only in the factory
+// This would allow us to load a seed phrase into static memory
+// in a factory image, so all factory-produced wallets would have
+// this same seed stored in memory in a protected way.
 fn erase_seed_phrase() -> Result<()> {
     // If our mnemonic hasn't been erased yet, and we have it saved
     // to disk, overwite it with 0's now
@@ -267,9 +267,9 @@ fn save_seed_phrase_encr(s: &str) -> Result<()> {
     let mut flash = dp.FLASH;
     let mut unlocked = flash.unlocked();
 
-    // First write the size as 4 bytes
-    unlocked.program(SEED_ADDR as usize, &buffer.len().to_le_bytes())?;
-    unlocked.program((SEED_ADDR + 4) as usize, &buffer)?;
+    // First write the size as 2 bytes
+    unlocked.program(SEED_ADDR as usize, &(buffer.len() as u16).to_le_bytes())?;
+    unlocked.program((SEED_ADDR + 2) as usize, &buffer)?;
 
     Ok(())
 }
@@ -277,13 +277,13 @@ fn save_seed_phrase_encr(s: &str) -> Result<()> {
 fn load_seed_plaintext_size() -> Result<Option<usize>> {
     // Load encrypted seed phrase from flash
     // The first four bytes are the length of the plaintext
-    let sz_bytes = unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR) as *const _, 4) };
-    let sz = u32::from_le_bytes(sz_bytes.try_into()?);
+    let sz_bytes = unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR) as *const _, 2) };
+    let sz = u16::from_le_bytes(sz_bytes.try_into()?);
     // If the size is zero or 0xFFFFFFFF, it's not been set. Therefore we have no saved seed
-    if sz == !0x00000000 || sz == 0x00000000 {
+    if sz == !0x0000 || sz == 0x0000 {
         Ok(None)
     } else {
-        Ok(Some(usize::from_le_bytes(sz_bytes.try_into()?)))
+        Ok(Some(u16::from_le_bytes(sz_bytes.try_into()?) as usize))
     }
 }
 
@@ -294,9 +294,9 @@ where
 {
     let sz =
         load_seed_plaintext_size()?.ok_or_else(|| WalletErr::from("no seed phrase to load"))?;
-    // The plaintext is stored 4 bytes past the size
+    // The plaintext is stored 2 bytes past the size
     let plaintext =
-        unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR + 4) as *const u8, sz) };
+        unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR + 2) as *const u8, sz) };
 
     buffer
         .extend_from_slice(plaintext)
@@ -309,7 +309,8 @@ where
     ccm.decrypt_in_place(NONCE.into(), &ASSOCIATED_DATA, buffer)
         .map_err(|_| WalletErr::from("failed to decrypt"))?;
 
-    Ok(unsafe { core::str::from_utf8_unchecked(buffer) })
+    Ok(core::str::from_utf8(buffer)
+        .map_err(|_| WalletErr::from("failed to decode decrypted seed as utf8; corrupt?"))?)
 }
 
 fn load_seed() -> Result<Seed> {
