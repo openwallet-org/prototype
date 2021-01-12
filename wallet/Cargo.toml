@@ -23,6 +23,7 @@ nb = "1"
 usb-device = "0.2"
 usbd-serial = "0.1"
 libm = "0.2"
+hex-literal = "*"
 
 serde = { version = "1.0", default-features = false}
 protocol = {path="../protocol"}

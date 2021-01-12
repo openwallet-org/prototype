@@ -8,7 +8,8 @@ use core::convert::TryInto;
 use error::{ErrStringType, WalletErr};
 
 use bip39::{Language, Mnemonic, Seed};
-use numtoa::NumToA;
+use hex_literal::hex;
+// use numtoa::NumToA;
 
 use panic_halt as _; // panic handler
 use stm32f4xx_hal as hal;
@@ -45,7 +46,7 @@ use tiny_keccak::{Hasher, Keccak};
 
 use aes_ccm::{
     aead::{consts::U8, AeadInPlace, NewAead},
-    Aes256Ccm,
+    Aes128Ccm,
 };
 
 const FLASH_START: u32 = 0x0800_0000;
@@ -72,6 +73,9 @@ impl Context {
 static mut EP_MEMORY: [u32; 1024] = [0; 1024];
 
 const MNEMONIC: &'static str = "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside";
+const AES_KEY: &[u8] = &hex!("C0 C1 C2 C3 C4 C5 C6 C7 C8 C9 CA CB CC CD CE CF");
+const NONCE: &[u8] = &hex!("00 00 00 03 02 01 00 A0 A1 A2 A3 A4 A5");
+const ASSOCIATED_DATA: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
 
 #[entry]
 fn main() -> ! {
@@ -167,7 +171,8 @@ fn main() -> ! {
 
 fn initialize() -> Result<Context> {
     if load_seed_plaintext_size()?.is_none() {
-        save_seed_phrase(MNEMONIC)?;
+        save_seed_phrase_encr(MNEMONIC)?;
+        erase_seed_phrase()?;
     }
     let seed = load_seed()?;
     let ctx = Context { seed, idx: 0 };
@@ -211,30 +216,13 @@ where
             };
             transmit_response(Response::Serial(serial), s)
         }
-        Request::Info => {
-            let addr = MNEMONIC.as_ptr() as usize - FLASH_START as usize;
-            // If our mnemonic hasn't been erased yet, and we have it saved
-            // to disk, overwite it with 0's now
-            if !MNEMONIC.is_empty() && load_seed_plaintext_size()?.is_some() {
-                // If the seed has been saved to disk encrypted,
-                let dp = unsafe { stm32::Peripherals::steal() };
-                let mut flash = dp.FLASH;
-                let mut unlocked = flash.unlocked();
-
-                // Erase the seed from flash
-                for a in addr..addr + MNEMONIC.len() {
-                    unlocked.program(a, &[0; 1])?;
-                }
-            }
-            transmit_response(
-                Response::Info((
-                    load_seed_plaintext_size()?.is_some(),
-                    // FLASH_START + STORAGE_START,
-                    addr as u32,
-                )),
-                s,
-            )
-        }
+        Request::Info => transmit_response(
+            Response::Info((
+                load_seed_plaintext_size()?.is_some(),
+                FLASH_START + STORAGE_START,
+            )),
+            s,
+        ),
     }
 }
 
@@ -242,27 +230,37 @@ fn sign_msg(ctx: &Context, msg: &[u8]) -> Result<recoverable::Signature> {
     Ok(secret_key(ctx)?.try_sign(&msg)?)
 }
 
-const AES_KEY: &[u8] = &[
-    0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
-    0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
-];
+fn erase_seed_phrase() -> Result<()> {
+    // If our mnemonic hasn't been erased yet, and we have it saved
+    // to disk, overwite it with 0's now
+    if !MNEMONIC.is_empty() && load_seed_plaintext_size()?.is_some() {
+        // If the seed has been saved to disk encrypted,
+        let dp = unsafe { stm32::Peripherals::steal() };
+        let mut flash = dp.FLASH;
+        let mut unlocked = flash.unlocked();
 
-const NONCE: &[u8] = &[
-    0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5,
-];
+        // Erase the seed from flash
+        let addr = MNEMONIC.as_ptr() as usize - FLASH_START as usize;
+        for a in addr..addr + MNEMONIC.len() {
+            unlocked.program(a, &[0; 1])?;
+        }
+        Ok(())
+    } else {
+        Err(WalletErr::from("failed to erase seed phrase"))
+    }
+}
 
-fn save_seed_phrase(s: &str) -> Result<()> {
+fn save_seed_phrase_encr(s: &str) -> Result<()> {
     let mut buffer: Vec<u8, U512> = Vec::new();
     buffer
         .extend_from_slice(s.as_bytes())
         .map_err(|_| WalletErr::from("failed to extend buffer from seed"))?;
 
-    let associated_data = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
     // `U8` represents the tag size as a `typenum` unsigned (8-bytes here)
-    let ccm = Aes256Ccm::<U8>::new(AES_KEY.into());
+    let ccm = Aes128Ccm::<U8>::new(AES_KEY.into());
 
     // Encrypt `buffer` in-place, replacing the plaintext contents with ciphertext
-    ccm.encrypt_in_place(NONCE.into(), &associated_data, &mut buffer)?;
+    ccm.encrypt_in_place(NONCE.into(), &ASSOCIATED_DATA, &mut buffer)?;
 
     // Save to flash
     let dp = unsafe { stm32::Peripherals::steal() };
@@ -280,15 +278,16 @@ fn load_seed_plaintext_size() -> Result<Option<usize>> {
     // Load encrypted seed phrase from flash
     // The first four bytes are the length of the plaintext
     let sz_bytes = unsafe { core::slice::from_raw_parts((FLASH_START + SEED_ADDR) as *const _, 4) };
-
+    let sz = u32::from_le_bytes(sz_bytes.try_into()?);
     // If the size is zero or 0xFFFFFFFF, it's not been set. Therefore we have no saved seed
-    if sz_bytes == [0xFF, 0xFF, 0xFF, 0xFF] || sz_bytes == [0x00, 0x00, 0x00, 0x00] {
+    if sz == !0x00000000 || sz == 0x00000000 {
         Ok(None)
     } else {
         Ok(Some(usize::from_le_bytes(sz_bytes.try_into()?)))
     }
 }
 
+/// Replaces the contents of `buffer` with decrypted data
 fn load_seed_phrase<'a, N>(buffer: &'a mut Vec<u8, N>) -> Result<&'a str>
 where
     N: ArrayLength<u8>,
@@ -303,28 +302,22 @@ where
         .extend_from_slice(plaintext)
         .map_err(|_| WalletErr::from("could not push plaintext bytes to buffer"))?;
 
-    let associated_data = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-
     // `U8` represents the tag size as a `typenum` unsigned (8-bytes here)
-    let ccm = Aes256Ccm::<U8>::new(AES_KEY.into());
-    if plaintext.len() != buffer.len() {
-        let mut buf = [0u8; 10];
-        let mut err_str = ErrStringType::from("plaintext.len() != buff.len(): ");
-        let _ = err_str.push_str(plaintext.len().numtoa_str(10, &mut buf));
-        let _ = err_str.push_str(" ");
-        let _ = err_str.push_str(buffer.len().numtoa_str(10, &mut buf));
-        return Err(WalletErr::StringErr(err_str));
-    }
+    let ccm = Aes128Ccm::<U8>::new(AES_KEY.into());
+
     // Decrypt `buffer` in-place, replacing its ciphertext contents with the original plaintext
-    ccm.decrypt_in_place(NONCE.into(), &associated_data, buffer)
+    ccm.decrypt_in_place(NONCE.into(), &ASSOCIATED_DATA, buffer)
         .map_err(|_| WalletErr::from("failed to decrypt"))?;
 
     Ok(unsafe { core::str::from_utf8_unchecked(buffer) })
 }
 
 fn load_seed() -> Result<Seed> {
+    // Decrypt the seed_phrase
     let mut buffer: Vec<u8, U512> = Vec::new();
-    let m = Mnemonic::from_phrase(load_seed_phrase(&mut buffer)?, Language::English)?;
+    let seed_phrase = load_seed_phrase(&mut buffer)?;
+    // Generate a mnemonic from it
+    let m = Mnemonic::from_phrase(seed_phrase, Language::English)?;
     Ok(Seed::new(&m, ""))
 }
 
@@ -367,19 +360,25 @@ fn read_serial<'a>() -> &'a [u8] {
     unsafe { core::slice::from_raw_parts((FLASH_START + SERIAL_ADDR) as *const u8, 10) }
 }
 
-fn write_serial() -> Result<()> {
-    let mut serial_bytes = [0x42u8; 10];
-    let sbl = serial_bytes.len();
+const SERIAL_LEN: usize = 10;
+
+fn is_serial_set() -> bool {
     let serial = unsafe {
         core::slice::from_raw_parts(
             ((<stm32::FLASH as FlashExt>::address() as u32) + SERIAL_ADDR) as *const u8,
-            sbl,
+            SERIAL_LEN,
         )
     };
-    let is_zero = serial
+    !serial
         .iter()
-        .fold(true, |is_zero, b| is_zero & (*b == 0x00 || *b == 0xFF));
-    if is_zero {
+        .fold(true, |is_zero, b| is_zero & (*b == 0x00 || *b == 0xFF))
+}
+
+fn write_serial() -> Result<()> {
+    // TODO: get the serial from manufacturing process
+    if !is_serial_set() {
+        // If our serial has not yet been written to disk, do so
+        let mut serial_bytes = [0x42u8; 10];
         let dp = unsafe { stm32::Peripherals::steal() };
         let mut flash = dp.FLASH;
         let mut unlocked = flash.unlocked();
