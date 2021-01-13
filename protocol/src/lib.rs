@@ -17,7 +17,7 @@ pub enum Request<'a> {
 pub enum Response<'a> {
     Pong,
     Sig(&'a [u8]),
-    Info((bool, u32)),
+    Info((bool, u32, &'a [u8])),
     Serial(&'a [u8]),
     PubKey(&'a [u8]),
     Address(&'a [u8]),
@@ -46,7 +46,7 @@ impl std::fmt::Display for Response<'_> {
                 write!(f, "Addresses: \n{}", addr_str)
             }
             Self::Serial(b) => write!(f, "Serial: 0x{}", hex::encode(b)),
-            Self::Info(b) => write!(f, "Info: {}, 0x{:X}", b.0, b.1),
+            Self::Info(b) => write!(f, "Info: {}, 0x{:X} {}", b.0, b.1, hex::encode(b.2)),
             Self::Err(s) => write!(f, "Err: {}", s),
         }
     }
