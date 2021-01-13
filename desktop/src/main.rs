@@ -57,7 +57,7 @@ fn main() {
                     // let request = Request::AddressList(i * 5);
                     let data = to_stdvec(&request).unwrap();
                     match port.write(&data) {
-                        Ok(count) => println!("Sent ({}): {:X?}", count, &request),
+                        Ok(count) => println!("Sent ({}): {:?}", count, &request),
                         Err(e) => eprintln!("err'd with {:?}", e),
                     };
                 }

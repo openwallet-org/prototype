@@ -135,6 +135,8 @@ fn main() -> ! {
         .device_class(USB_CLASS_CDC)
         .build();
 
+    let mut ctx = initialize().map_err(|_| ()).unwrap();
+
     loop {
         if !usb_dev.poll(&mut [&mut serial]) {
             continue;
@@ -157,7 +159,7 @@ fn main() -> ! {
             })
             .and_then(|req| {
                 // We've successfully deserialized into a Request -- process it
-                answer_request(&req, &mut serial)
+                answer_request(&req, &mut serial, &mut ctx)
             });
 
         // If we have an actual error, send it to the host
@@ -179,30 +181,26 @@ fn initialize() -> Result<Context> {
     Ok(ctx)
 }
 
-fn answer_request<T>(r: &Request, s: &mut SerialPort<T>) -> Result<()>
+fn answer_request<T>(r: &Request, s: &mut SerialPort<T>, ctx: &mut Context) -> Result<()>
 where
     T: class_prelude::UsbBus,
 {
     match r {
         Request::Ping => transmit_response(Response::Pong, s),
         Request::Sig(msg) => {
-            let ctx = initialize()?;
             let sig = sign_msg(&ctx, &msg)?;
             let sig_bytes = sig.as_bytes();
             transmit_response(Response::Sig(&sig_bytes), s)
         }
         Request::PubKey => {
-            let ctx = initialize()?;
             let pubkey_bytes = public_key(&ctx)?.to_bytes();
             transmit_response(Response::PubKey(&pubkey_bytes), s)
         }
         Request::Address(idx) => {
-            let mut ctx = initialize()?;
             let addr_bytes = address(ctx.set_idx(*idx))?;
             transmit_response(Response::Address(&addr_bytes), s)
         }
         Request::AddressList(idx) => {
-            let mut ctx = initialize()?;
             let addresses = addresses(&mut ctx.set_idx(*idx))?;
             transmit_response(Response::AddressList(&addresses), s)
         }

@@ -14,7 +14,8 @@ edition = "2018"
 # stm32f1xx-hal = {git="https://github.com/TheRealBluesun/stm32f1xx-hal", branch="flash_protection", features = ["rt", "stm32f103", "medium", "stm32-usbd"] }
 # stm32f4xx-hal = {version = "0.8.3", features = ["rt", "stm32f401", "usb_fs"] }
 # stm32f4xx-hal = {git = "https://github.com/astro/stm32f4xx-hal", branch="flash", features = ["rt", "stm32f401", "usb_fs"] }
-stm32f4xx-hal = {path = "../..//stm32f4xx-hal", features = ["rt", "stm32f401", "usb_fs"] }
+# stm32f4xx-hal = {path = "../..//stm32f4xx-hal", features = ["rt", "stm32f401", "usb_fs"] }
+stm32f4xx-hal = {git="https://github.com/TheRealBluesun/stm32f4xx-hal", branch="flash", features = ["rt", "stm32f401", "usb_fs"] }
 embedded-hal = "0.2"
 cortex-m = "0.6"
 cortex-m-rt = "0.6"
