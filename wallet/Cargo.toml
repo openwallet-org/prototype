@@ -40,7 +40,6 @@ ssd1306 = "*"
 embedded-graphics = "*"
 aes-ccm = {version="0.5.0",  default-features = false, features=["heapless", "aes"]}
 
-
 [profile.release]
 opt-level = 's' #'z'  # Optimize for size.
 lto = true

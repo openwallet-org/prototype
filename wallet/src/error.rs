@@ -37,6 +37,12 @@ pub enum WalletErr {
 //     }
 // }
 
+impl From<core::fmt::Error> for WalletErr {
+    fn from(_: core::fmt::Error) -> WalletErr {
+        WalletErr::from("fmt Error")
+    }
+}
+
 impl From<Utf8Error> for WalletErr {
     fn from(_: Utf8Error) -> WalletErr {
         WalletErr::from("failed to decode as ut8")

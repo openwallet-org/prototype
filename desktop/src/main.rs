@@ -41,20 +41,21 @@ fn main() {
             let mut is_waiting = false;
             loop {
                 if !is_waiting {
-                    let res = i % 5;
-                    let request = if res == 0 {
-                        Request::Serial
-                    } else if res == 1 {
-                        Request::Info
-                    // Request::Ping
-                    } else if res == 2 {
-                        Request::Address(i - res)
-                    } else if res == 3 {
-                        Request::AddressList(i - res)
-                    } else {
-                        Request::Sig(&[0x41, 0x42, 0x43, 0x44])
-                    };
+                    // let res = i % 5;
+                    // let request = if res == 0 {
+                    //     Request::Serial
+                    // } else if res == 1 {
+                    //     Request::Info
+                    // // Request::Ping
+                    // } else if res == 2 {
+                    //     Request::Address(i - res)
+                    // } else if res == 3 {
+                    //     Request::AddressList(i - res)
+                    // } else {
+                    //     Request::Sig(&[0x41, 0x42, 0x43, 0x44])
+                    // };
                     // let request = Request::AddressList(i * 5);
+                    let request = Request::Address(i);
                     let data = to_stdvec(&request).unwrap();
                     match port.write(&data) {
                         Ok(count) => println!("Sent ({}): {:?}", count, &request),
