@@ -5,16 +5,22 @@ pub mod error;
 mod safemem;
 
 use core::convert::TryInto;
+use embedded_graphics::fonts::Font12x16;
+use embedded_graphics::prelude::*;
 use error::{ErrStringType, WalletErr};
 
 use bip39::{Language, Mnemonic, Seed};
 use hex_literal::hex;
 // use numtoa::NumToA;
 
-use panic_halt as _; // panic handler
+use panic_halt as _;
+use ssd1351::builder::Builder;
+use ssd1351::mode::GraphicsMode;
+use ssd1351::prelude::*;
+// panic handler
 use stm32f4xx_hal as hal;
 
-use hal::flash::FlashExt;
+use hal::{delay::Delay, flash::FlashExt, spi::Spi};
 
 use k256::{
     ecdsa::{
@@ -81,6 +87,7 @@ const NONCE: &[u8] = &hex!("00 00 00 03 02 01 00 A0 A1 A2 A3 A4 A5");
 fn main() -> ! {
     // This unwrap is safe because we're the first/only to take() it
     let dp = stm32::Peripherals::take().unwrap();
+    let cp = cortex_m::peripheral::Peripherals::take().unwrap();
     let rcc = dp.RCC.constrain();
 
     let clocks = rcc
@@ -98,17 +105,38 @@ fn main() -> ! {
     // let _ = led.set_low();
     // let _ = led.set_high();
 
-    // Do I2C related things
-    // For I2C1, SCL=PB6, SDA=PB7, AF04
-    // let gpiob = dp.GPIOB.split();
-    // let scl = gpiob.pb6.into_alternate_af4_open_drain();
-    // let sda = gpiob.pb7.into_alternate_af4_open_drain();
-    // let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
+    let mut gpioa = dp.GPIOA.split();
+    let mut gpiob = dp.GPIOB.split();
 
-    // let i2c_interface = I2CDIBuilder::new().init(i2c);
-    // let mut disp: GraphicsMode<_, _> = Builder::new().connect(i2c_interface).into();
-    // disp.init().unwrap();
-    // disp.flush().unwrap();
+    let mut rst = gpiob.pb0.into_push_pull_output();
+
+    let dc = gpiob.pb1.into_push_pull_output();
+
+    let sck = gpioa.pa5.into_alternate_af5();
+    let miso = gpioa.pa6.into_alternate_af5();
+    let mosi = gpioa.pa7.into_alternate_af5();
+
+    let spi = Spi::spi1(
+        dp.SPI1,
+        (sck, miso, mosi),
+        SSD1351_SPI_MODE,
+        2.mhz().into(),
+        clocks,
+    );
+
+    let mut delay = Delay::new(cp.SYST, clocks);
+    let mut display: GraphicsMode<_> = Builder::new().connect_spi(spi, dc).into();
+    // let mut disp: GraphicsMode<_> = Builder::new().connect(interface).into();
+    // display.reset(&mut rst, &mut delay);
+    // display.init().unwrap();
+
+    // let i: u16 = 0xFFFF;
+    // // display.set_rotation(DisplayRotation::Rotate270).unwrap();
+    // display.draw(
+    //     Font12x16::render_str("Wave")
+    //         .with_stroke(Some(i.into()))
+    //         .into_iter(),
+    // );
 
     // // Display the rustacean
     // let raw_image: ImageRaw<BinaryColor> =
@@ -117,7 +145,6 @@ fn main() -> ! {
     // image.draw(&mut disp).unwrap();
     // disp.flush().unwrap();
 
-    let gpioa = dp.GPIOA.split();
     let usb = USB {
         usb_global: dp.OTG_FS_GLOBAL,
         usb_device: dp.OTG_FS_DEVICE,
